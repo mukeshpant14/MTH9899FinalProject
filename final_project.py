@@ -48,8 +48,6 @@ def get_data():
 def get(df):
     X = df[['vol', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']].values
     y = df[['fut_ret']].values.flatten()
-    print(X)
-    print(y)
     return (X, y)
 
 def run():
@@ -61,8 +59,8 @@ def run():
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=1/6, shuffle=False)
 
-    models = [LinearRegression()] #,
-            #RandomForestClassifier(random_state=5),
+    models = [LinearRegression(),
+              RandomForestClassifier(n_estimators=100, max_depth=2,random_state=5)]
             #MLPClassifier(random_state=5)]
     
     # fit
