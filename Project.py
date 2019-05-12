@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor 
 from sklearn.feature_selection import RFE
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, r2_score
 
@@ -24,7 +25,7 @@ def pre_process(df, normalize=False):
     
     print(df.isnull().sum())
 #    print(df[pd.isnull(df).any(axis=1)])
-    
+    df=clean_data(df)
 #    if normalize:
     cols=['fut_ret','vol','X1','X2','X3','X4','X5','X6','X7']
     for col in cols:
@@ -50,12 +51,12 @@ def get_data():
     return df
 
 def featureselection(df):
-    model=RandomForestClassifier(n_estimators=100, max_depth=2,random_state=5)
+    model=LinearRegression()
     rfe = RFE(model, 6)
     (X, y) = get(df)
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=1/6, shuffle=False)
     rfe = rfe.fit(X_train, y_train)
-    names=['vol', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']
+    names=['vol_norm', 'X1_norm', 'X2_norm', 'X3_norm', 'X4_norm', 'X5_norm', 'X6_norm','X7_norm']
 
     print ("Features by RFE process:")
     print (sorted(zip(map(lambda x: x, rfe.support_), 
@@ -66,10 +67,16 @@ def featureselection(df):
     
 
 def get(df):
-    X = df[['vol', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']].values
-    y = df[['fut_ret']].values.flatten()
+    X = df[['vol_norm', 'X1_norm', 'X2_norm', 'X3_norm', 'X4_norm', 'X5_norm', 'X6_norm','X7_norm']].values
+    y = df[['fut_ret_norm']].values.flatten()
     return (X, y)
 
+
+def gbm(df):
+    
+    estimator=GradientBoostingRegressor()
+    estimator.fit()
+    
 def run():
     df = get_data()
     df = pre_process(df,True)
