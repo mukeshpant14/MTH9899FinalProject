@@ -314,7 +314,7 @@ def run(selection='mda'):
     else: #only basic features
         X2 = X
           
-    X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False, random_state=0)
+    X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False)
     # Append the models to the models list
     model_names = ['LinearRegression', 'GradientBoostingRegressor']
     
