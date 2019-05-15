@@ -7,27 +7,23 @@ Created on Sat May 11 10:27:57 2019
 
 import pandas as pd
 import numpy as np
-from sklearn import preprocessing
-from sklearn.model_selection import KFold
 from sklearn.model_selection import train_test_split
 
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, r2_score
 import matplotlib.pyplot as plt
-
-from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.naive_bayes import GaussianNB
-from sklearn.svm import SVC
-# neural network
-from sklearn.neural_network import MLPClassifier
+from pylab import rcParams
+from sklearn.linear_model import LinearRegression
 # ensemble models
-from sklearn.ensemble import AdaBoostClassifier, GradientBoostingRegressor, RandomForestClassifier, ExtraTreesClassifier, RandomForestRegressor
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 #from xgboost import XGBClassifier
 from sklearn.cluster import KMeans
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import PolynomialFeatures
+import operator
+from sklearn.model_selection import ShuffleSplit
+from collections import defaultdict
+from sklearn.feature_selection import RFE
 
 def ts_normalize(df, columns):
     result = df.copy()
@@ -140,7 +136,6 @@ def clean_data(org_data, empty_thres=0.25):
   
   org_data = pd.concat(clean_series)
     
-  #TODO normalize again along the entire set?
   return org_data
     
 def run_models_cross_validation(models):
@@ -161,7 +156,6 @@ def get(df):
 
 def get_model(name):
     if name == 'LinearRegression': return LinearRegression()
-    elif name == 'DecisionTreeRegressor': return DecisionTreeRegressor()
     elif name == 'RandomForestRegressor': return RandomForestRegressor(n_estimators=50,min_samples_split=0.001)
     elif name == 'KNeighborsRegressor': return KNeighborsRegressor()
     elif name == 'GradientBoostingRegressor': return GradientBoostingRegressor(learning_rate=0.1,n_estimators=20,
@@ -240,27 +234,89 @@ class ClusterRegressor:
         
         print('finished predict')
         return y_pred_arr
+
+
+def featureselection_rfe(X, y):     
+    poly = PolynomialFeatures(degree=2, include_bias=False)
+    X2 = poly.fit_transform(X)
     
-def run():
+    model=LinearRegression()
+    #discard half of the features
+    rfe = RFE(model)
+    X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False)
+    rfe = rfe.fit(X_train, y_train)
+    names=poly.get_feature_names()
+
+    print ("Features by RFE process:")
+    print (sorted(zip(map(lambda x: x, rfe.support_), 
+                  names), reverse=True))
+    print(rfe.support_)
+    print(rfe.ranking_)
+    return X2[:,rfe.ranking_==1]
+
+def featureselection_mda(X, y):
+    
+    poly = PolynomialFeatures(degree=2, include_bias=False)
+    X2 = poly.fit_transform(X)
+    
+    scores = defaultdict(list)
+    features = poly.get_feature_names()
+
+
+    reg = LinearRegression()
+    count = 1
+    splits = 100
+    for train_idx, test_idx in ShuffleSplit(n_splits=splits).split(X2):
+        X_train, X_test = X2[train_idx], X2[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        rf = reg.fit(X_train, y_train)
+        acc = r2_score(y_test, rf.predict(X_test))
+        if count%10==0 : print(f"run {count}/{splits}")
+        for i in range(X2.shape[1]):
+            X_t = X_test.copy()
+            np.random.shuffle(X_t[:, i])
+            shuff_acc = r2_score(y_test, rf.predict(X_t))
+            scores[features[i]].append((acc-shuff_acc)/acc)
+        count = count + 1
+
+    mda_features = [f for f in scores.keys()]
+    mda_importance = [(np.mean(score)) for score in scores.values()] 
+    mda_indices = np.argsort(mda_importance)[::-1]
+    
+    print ("Features by MDA process:")
+    
+    rcParams['figure.figsize'] = 16, 20
+    plt.title('Feature Importances')
+    plt.barh(range(len(mda_indices)), [mda_importance[i] for i in mda_indices], color='#8f63f4', align='center')
+    plt.yticks(range(len(mda_indices)), [mda_features[i] for i in mda_indices])
+    plt.xlabel('Mean decrease accuracy')
+    plt.show()
+    
+    
+    features = dict(zip(mda_features,mda_importance))
+    sorted_feats = sorted(features.items(), key=operator.itemgetter(1), reverse=True)
+    print(pd.DataFrame(sorted_feats))
+    # discard half of the features
+    return X2[:, mda_indices[0:X2.shape[1]//2]]
+    
+def run(selection='mda'):
     df = get_data()
-    df = pre_process(df)
     df = clean_data(df)
-    df.reset_index(inplace=True)
-    # plot for a sec_id = 0
-    sec_0 = df.loc[df['sec_id'] == 0]
-    sec_0 = sec_0[['Date','fut_ret']]
-    sec_0.plot(kind='line',x='Date', y='fut_ret',ax=plt.gca())
-    #plt.show()
     
     (X, y) = get(df)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=1/6, shuffle=False)
-        
+    if selection == 'mda':
+        X2 = featureselection_mda(X, y)
+    elif selection == 'rfe':
+        X2 = featureselection_rfe(X, y)
+    elif selection == 'all': #all features
+        poly = PolynomialFeatures(degree=2, include_bias=False)
+        X2 = poly.fit_transform(X)
+    else: #only basic features
+        X2 = X
+          
+    X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False, random_state=0)
     # Append the models to the models list
-    model_names = ['LinearRegression', 
-                   'KNeighborsRegressor', 
-                   'DecisionTreeRegressor', 
-                   'RandomForestRegressor',
-                   'GradientBoostingRegressor']
+    model_names = ['LinearRegression', 'GradientBoostingRegressor']
     
     # fit
     result = {}
@@ -272,7 +328,7 @@ def run():
         r2_in = r2_score(y_train, cr.predict(X_train))
         result[name] = (r2_in, r2_out)
         print('{} r2_in : {}, r2_out:{}'.format(name, r2_in, r2_out))
-     
     print(result)
 
-run()
+run('mda')
+
