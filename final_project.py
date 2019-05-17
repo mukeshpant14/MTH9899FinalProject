@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sat May 11 10:27:57 2019
-
 @author: mukes
 """
 
@@ -144,13 +143,13 @@ def run_models_cross_validation(models):
 
 def get_data():
     df = pd.read_csv('dat_final.csv')
-    df.set_index('Date')
+    #df.set_index('Date')
 #    df=df.loc[df['Date']==0]
     return df
 
 def get(df):
     #X = df[['vol', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']].values
-    X = df[['vol_ffd', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']].values
+    X = df[['vol_ffd','fut_ret_lag','fut_ret_lag1','X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']].values
     y = df[['fut_ret']].values.flatten()
     return (X, y)
 
@@ -235,18 +234,28 @@ class ClusterRegressor:
         print('finished predict')
         return y_pred_arr
 
+def addlag_var(df1):
+    df1['fut_ret_lag']=df1['fut_ret'].shift(1)
+    df1['fut_ret_lag1']=df1['fut_ret'].shift(2)
+    df1['sec_id_lag']=df1['sec_id'].shift(1)
+
+    df1['sec_id_lag1']=df1['sec_id'].shift(2)
+
+    df1['fut_ret_lag'] = np.where(df1['sec_id_lag'] == df1['sec_id'], df1['fut_ret_lag'], 0)
+    df1['fut_ret_lag1'] = np.where(df1['sec_id_lag1'] == df1['sec_id'], df1['fut_ret_lag1'], 0)
+    
+    return df1
+
 
 def featureselection_rfe(X, y):     
     poly = PolynomialFeatures(degree=2, include_bias=False)
     X2 = poly.fit_transform(X)
-    
     model=LinearRegression()
     #discard half of the features
     rfe = RFE(model)
     X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False)
     rfe = rfe.fit(X_train, y_train)
     names=poly.get_feature_names()
-
     print ("Features by RFE process:")
     print (sorted(zip(map(lambda x: x, rfe.support_), 
                   names), reverse=True))
@@ -302,7 +311,7 @@ def featureselection_mda(X, y):
 def run(selection='mda'):
     df = get_data()
     df = clean_data(df)
-    
+    df= addlag_var(df)
     (X, y) = get(df)
     if selection == 'mda':
         X2 = featureselection_mda(X, y)
@@ -330,5 +339,4 @@ def run(selection='mda'):
         print('{} r2_in : {}, r2_out:{}'.format(name, r2_in, r2_out))
     print(result)
 
-run('mda')
-
+run('rfe')
