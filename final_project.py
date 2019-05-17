@@ -185,7 +185,6 @@ def get_model(name):
     elif name == 'GradientBoostingRegressor': return GradientBoostingRegressor(learning_rate=0.1,n_estimators=20,
                                                                                max_depth=2,max_features=6,
                                                                                min_samples_split=4000,min_samples_leaf=200)
-<<<<<<< HEAD
     elif name == 'GradientBoosterWithKFold': return GradientBooster(params={
             'learning_rate':[0.1, 0.01],
             'n_estimators':[20, 50],
