@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sat May 11 10:27:57 2019
+
 @author: mukes
 """
 
@@ -8,7 +9,7 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, r2_score
+from sklearn.metrics import r2_score
 import matplotlib.pyplot as plt
 from pylab import rcParams
 from sklearn.linear_model import LinearRegression
@@ -23,6 +24,8 @@ import operator
 from sklearn.model_selection import ShuffleSplit
 from collections import defaultdict
 from sklearn.feature_selection import RFE
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import KFold 
 
 def ts_normalize(df, columns):
     result = df.copy()
@@ -112,11 +115,9 @@ def clean_data(org_data, empty_thres=0.25):
     zeros = len(s[s.fut_ret==0.0])
     if zeros>total*empty_thres:
         empty_secs.add(s.sec_id[0])
-    zeros = len(s[s.vol==0.0])
-    if zeros>total*empty_thres:
-        empty_secs.add(s.sec_id[0])
-  
-  print("Discarding " + str(len(empty_secs)) + " securities with incomplete data (threshold=" + str(empty_thres))
+
+  discarded = len(empty_secs)
+  print(f"Discarding {discarded} securities with incomplete return data (threshold={empty_thres})")
   clean_series = []
   for s in series:
     if s.sec_id[0] not in empty_secs:
@@ -128,28 +129,21 @@ def clean_data(org_data, empty_thres=0.25):
   clean_series = [ ts_fillna(x, 'vol', median) for x in clean_series] 
   clean_series = [ ts_normalize(x, input_vars) for x in clean_series] 
   
-  #make vol a stationary variable using fractional differencing
-  #the differencing factor is decided as the value that makes more than 95% 
-  #of the samples in the dataset stationary
+  # factor of differentiation decided as the one that makes all the samples in the dataset stationary
   [add_vol_ffd(x, 0.7) for x in clean_series]
   
   org_data = pd.concat(clean_series)
     
   return org_data
     
-def run_models_cross_validation(models):
-    
-    return 0
-
 def get_data():
     df = pd.read_csv('dat_final.csv')
-    #df.set_index('Date')
-#    df=df.loc[df['Date']==0]
+    df.set_index('Date')
     return df
 
 def get(df):
     #X = df[['vol', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']].values
-    X = df[['vol_ffd','fut_ret_lag','fut_ret_lag1','X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']].values
+    X = df[['vol_ffd', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']].values
     y = df[['fut_ret']].values.flatten()
     return (X, y)
 
@@ -160,6 +154,9 @@ def get_model(name):
     elif name == 'GradientBoostingRegressor': return GradientBoostingRegressor(learning_rate=0.1,n_estimators=20,
                                                                                max_depth=2,max_features=6,
                                                                                min_samples_split=4000,min_samples_leaf=200)
+    elif name == 'GradientBoostingRegressor_100':
+        #from gb_param_tuning
+        return GradientBoostingRegressor(learning_rate=0.1,n_estimators=100,max_depth=3,max_features='sqrt',min_samples_split=0.001)
     # cluster based models
     elif name == 'ClusterLinearRegressor': return ClusterRegressor('LinearRegression')
     elif name == 'ClusterGradientBoostingRegressor': return ClusterRegressor('GradientBoostingRegressor')
@@ -234,28 +231,18 @@ class ClusterRegressor:
         print('finished predict')
         return y_pred_arr
 
-def addlag_var(df1):
-    df1['fut_ret_lag']=df1['fut_ret'].shift(1)
-    df1['fut_ret_lag1']=df1['fut_ret'].shift(2)
-    df1['sec_id_lag']=df1['sec_id'].shift(1)
-
-    df1['sec_id_lag1']=df1['sec_id'].shift(2)
-
-    df1['fut_ret_lag'] = np.where(df1['sec_id_lag'] == df1['sec_id'], df1['fut_ret_lag'], 0)
-    df1['fut_ret_lag1'] = np.where(df1['sec_id_lag1'] == df1['sec_id'], df1['fut_ret_lag1'], 0)
-    
-    return df1
-
 
 def featureselection_rfe(X, y):     
     poly = PolynomialFeatures(degree=2, include_bias=False)
     X2 = poly.fit_transform(X)
+    
     model=LinearRegression()
     #discard half of the features
     rfe = RFE(model)
     X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False)
     rfe = rfe.fit(X_train, y_train)
     names=poly.get_feature_names()
+
     print ("Features by RFE process:")
     print (sorted(zip(map(lambda x: x, rfe.support_), 
                   names), reverse=True))
@@ -295,7 +282,7 @@ def featureselection_mda(X, y):
     print ("Features by MDA process:")
     
     rcParams['figure.figsize'] = 16, 20
-    plt.title('Feature Importances')
+    plt.title('Feature Importances by MDA')
     plt.barh(range(len(mda_indices)), [mda_importance[i] for i in mda_indices], color='#8f63f4', align='center')
     plt.yticks(range(len(mda_indices)), [mda_features[i] for i in mda_indices])
     plt.xlabel('Mean decrease accuracy')
@@ -307,11 +294,25 @@ def featureselection_mda(X, y):
     print(pd.DataFrame(sorted_feats))
     # discard half of the features
     return X2[:, mda_indices[0:X2.shape[1]//2]]
+
+def gb_param_tuning(X, y, cv_splits=5):
+    from sklearn.model_selection import GridSearchCV
+    parameters = {'learning_rate':[0.1, 0.01, 0.001], 
+                  'n_estimators':[20, 50, 100],
+                  'min_samples_split': [0.02, 0.01, 0.001],
+                  'max_depth' : [2, 3, 4],
+                  'max_features': [0.25, 'sqrt']}  #0.25 ~ 10, sqrt ~ 6
+                  
+    gb = GradientBoostingRegressor()
+    clf = GridSearchCV(gb, parameters, cv=cv_splits, iid=False, verbose=10, n_jobs=4)
+    clf.fit(X, y)
+    return clf.best_params_
+
     
-def run(selection='mda'):
+def run(selection='mda',cross_val=True, cv_splits=5):
     df = get_data()
     df = clean_data(df)
-    df= addlag_var(df)
+    
     (X, y) = get(df)
     if selection == 'mda':
         X2 = featureselection_mda(X, y)
@@ -325,18 +326,26 @@ def run(selection='mda'):
           
     X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False)
     # Append the models to the models list
-    model_names = ['LinearRegression', 'GradientBoostingRegressor']
+    model_names = ['LinearRegression', 'GradientBoostingRegressor', 'GradientBoostingRegressor_100']
     
     # fit
     result = {}
     for name in model_names:
         print('Running model:{}'.format(name))
         cr = get_model(name)
-        cr.fit(X_train, y_train)
-        r2_out = r2_score(y_test, cr.predict(X_test))
-        r2_in = r2_score(y_train, cr.predict(X_train))
-        result[name] = (r2_in, r2_out)
-        print('{} r2_in : {}, r2_out:{}'.format(name, r2_in, r2_out))
+        if cross_val == False:
+            cr.fit(X_train, y_train)
+            r2_out = r2_score(y_test, cr.predict(X_test))
+            r2_in = r2_score(y_train, cr.predict(X_train))
+            result[name] = (r2_in, r2_out)
+            print('{} r2_in : {}, r2_out:{}'.format(name, r2_in, r2_out))
+        else:
+            kf =  KFold(n_splits=cv_splits, shuffle=False)
+            cv_score = cross_val_score(cr, X2, y, cv=kf)
+            result[name] = (cv_score)
+            avg = np.mean(result[name])
+            print(f"{name} mean: {avg}, cv_score : {cv_score}")
     print(result)
 
 run('rfe')
+
