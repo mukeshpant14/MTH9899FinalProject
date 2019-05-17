@@ -21,9 +21,13 @@ from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import PolynomialFeatures
 import operator
-from sklearn.model_selection import ShuffleSplit
+from sklearn.model_selection import ShuffleSplit, GridSearchCV, KFold
 from collections import defaultdict
 from sklearn.feature_selection import RFE
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import LSTM
+from keras.layers import Dropout
 
 def ts_normalize(df, columns):
     result = df.copy()
@@ -104,7 +108,6 @@ def clean_data(org_data, empty_thres=0.25):
   series = [org_data[org_data['sec_id']== i] for i in sec_ids]
   series = [ x.set_index('Date') for x in series] #sets the index to the Date
   
-  
   # get rid of the securities with less than empty_thres % valid return or vol data (zeros)
   empty_secs = set()
   for i in range(len(series)):
@@ -154,18 +157,116 @@ def get(df):
     y = df[['fut_ret']].values.flatten()
     return (X, y)
 
+class GradientBooster:
+    def __init__(self, params):
+        self.params = params
+        
+    def fit(self, X, y):
+        estimator = GradientBoostingRegressor()
+        cv = KFold(n_splits=10)
+        
+        classifier = GridSearchCV(estimator=estimator, cv=cv, param_grid=self.params, n_jobs=4)
+        classifier.fit(X, y)
+        
+        print(classifier.best_estimator_)
+        self.classifier = classifier
+        
+        best_est = classifier.best_estimator_
+        print('best estimator: {}'.format(best_est))
+        best_estimator = GradientBoostingRegressor(learning_rate=best_est.learning_rate,
+                                                   n_estimators=best_est.n_estimators,
+                                                   max_depth=best_est.max_depth,
+                                                   max_features=best_est.max_features,
+                                                   min_samples_split=best_est.min_samples_split,
+                                                   min_samples_leaf=best_est.min_samples_leaf)
+        best_estimator.fit(X, y)
+        self.best_estimator = best_estimator
+        
+    def predict(self, X_test):
+        return self.best_estimator.predict(X_test)
+        
 def get_model(name):
     if name == 'LinearRegression': return LinearRegression()
-    elif name == 'RandomForestRegressor': return RandomForestRegressor(n_estimators=50,min_samples_split=0.001)
+    elif name == 'RandomForestRegressor': return RandomForestRegressor(n_estimators=10,min_samples_split=0.001)
     elif name == 'KNeighborsRegressor': return KNeighborsRegressor()
     elif name == 'GradientBoostingRegressor': return GradientBoostingRegressor(learning_rate=0.1,n_estimators=20,
                                                                                max_depth=2,max_features=6,
                                                                                min_samples_split=4000,min_samples_leaf=200)
+    elif name == 'GradientBoosterWithKFold': return GradientBooster(params={
+            'learning_rate':[0.1, 0.01],
+            'n_estimators':[20, 50],
+            'max_depth':[2, 5],
+            'max_features':[6],
+            'min_samples_split':[4000, 2000],
+            'min_samples_leaf':[200]
+            })
+    elif name == 'LSTMRegressor': return LSTMRegressor(time_step=30)
     # cluster based models
     elif name == 'ClusterLinearRegressor': return ClusterRegressor('LinearRegression')
     elif name == 'ClusterGradientBoostingRegressor': return ClusterRegressor('GradientBoostingRegressor')
     else: return LinearRegression()
     
+class LSTMRegressor:
+    def __init__(self, time_step):
+        self.time_step = time_step
+        
+    def build_timeseries(self, X, y):
+        time_step = self.time_step
+        d1 = X.shape[0] - self.time_step + 1
+        d2 = X.shape[1]
+        
+        X_m = np.zeros((d1, time_step, d2))
+        y_m = np.zeros((d1, time_step, ))
+        
+        for i in range(d1):
+            X_m[i] = X[i:time_step+i]
+            y_m[i] = y[i:time_step+i] 
+        
+        return (X_m, y_m)
+    
+    def fit(self, X, y):
+        (X_m, y_m) = self.build_timeseries(X, y)
+        
+        batch_size = 10000
+        regressor = Sequential()
+
+        # Adding the first LSTM layer and some Dropout regularisation
+        regressor.add(LSTM(units = 50, return_sequences = True, input_shape = (X_m.shape[1], X_m.shape[2])))
+        regressor.add(Dropout(0.2))
+        
+        # Adding a second LSTM layer and some Dropout regularisation
+        regressor.add(LSTM(units = 50, return_sequences = True))
+        regressor.add(Dropout(0.2))
+        
+        # Adding a third LSTM layer and some Dropout regularisation
+        regressor.add(LSTM(units = 50, return_sequences = True))
+        regressor.add(Dropout(0.2))
+        
+        # Adding a fourth LSTM layer and some Dropout regularisation
+        regressor.add(LSTM(units = 50))
+        regressor.add(Dropout(0.2))
+        
+        # Adding the output layer
+        regressor.add(Dense(units=30))
+        # Compiling the RNN
+        regressor.compile(optimizer = 'ADAgrad', loss = 'mean_squared_error')
+        
+        # Fitting the RNN to the Training set
+        regressor.fit(X_m, y_m, epochs =1, batch_size = batch_size)
+        self.regressor = regressor
+        
+    def predict(self, X_test, y_test):
+        print(X_test.shape)
+        y = np.zeros((X_test.shape[0],))
+        (X_test_m, y_test_m) = self.build_timeseries(X_test, y_test)
+         
+        print(X_test_m.shape)
+        print(y_test_m.shape)
+        y_predict = self.regressor.predict(X_test_m)
+        print(y_predict.shape)
+        
+        return r2_score(y_test_m, y_predict)
+        
 class ClusterRegressor:
     def __init__(self, name):
         self.columns = ['vol', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']
@@ -255,13 +356,11 @@ def featureselection_rfe(X, y):
     return X2[:,rfe.ranking_==1]
 
 def featureselection_mda(X, y):
-    
     poly = PolynomialFeatures(degree=2, include_bias=False)
     X2 = poly.fit_transform(X)
     
     scores = defaultdict(list)
     features = poly.get_feature_names()
-
 
     reg = LinearRegression()
     count = 1
@@ -316,7 +415,9 @@ def run(selection='mda'):
           
     X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False)
     # Append the models to the models list
-    model_names = ['LinearRegression', 'GradientBoostingRegressor']
+    model_names = ['LinearRegression', 'GradientBoostingRegressor', 'RandomForestRegressor', 
+                   'KNeighborsRegressor', 'ClusterLinearRegressor', 'ClusterGradientBoostingRegressor']
+    model_names = ['LSTMRegressor']
     
     # fit
     result = {}
@@ -324,11 +425,20 @@ def run(selection='mda'):
         print('Running model:{}'.format(name))
         cr = get_model(name)
         cr.fit(X_train, y_train)
-        r2_out = r2_score(y_test, cr.predict(X_test))
-        r2_in = r2_score(y_train, cr.predict(X_train))
+        
+        r2_out = cr.predict(X_test, y_test)
+        r2_in = cr.predict(X_train, y_train)
+#        r2_out = r2_score(y_test, cr.predict(X_test))
+#        r2_in = r2_score(y_train, cr.predict(X_train))
         result[name] = (r2_in, r2_out)
         print('{} r2_in : {}, r2_out:{}'.format(name, r2_in, r2_out))
-    print(result)
+    
+#    print(result)
 
-run('mda')
+#def build():
+    
+
+
+
+run('rfe')
 
