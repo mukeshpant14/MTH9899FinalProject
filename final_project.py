@@ -500,7 +500,12 @@ def run(selection='mda'):
     model_names = ['GradientBoosterWithKFold', 'GradientBoostingRegressor_BEST']
     model_names = ['GradientBoostingRegressor_BEST']
     model_names = ['ClusterLSTMRegressor', 'LSTMRegressor']
-    model_names = ['ForestWithKFold', 'RandomForestRegressor']
+    model_names = ['RandomForestRegressor']
+    model_names = ['LinearRegression','RandomForestRegressor','RandomForestRegressor_CV',
+                   'KNeighborsRegressor','GradientBoostingRegressor','LSTMRegressor',
+                   'GradientBoosterWithKFold','GradientBoostingRegressor_BEST','RandomForestRegressor_BEST',
+                   'ClusterLinearRegressor','ClusterGradientBoostingRegressor','ClusterLSTMRegressor',
+                   'ForestWithKFold']
     # fit
     result = {}
     for name in model_names:
@@ -549,9 +554,8 @@ def run_model_from_disk(filename, selection='rfe', train_test=True):
         #r2_in = cr.score(X_train, y_train)
         print('{} r2_in : {}, r2_out:{}'.format(name, r2_in, r2_out))
     else:
-        
         y_pred = cr.predict(X2)
         #TODO Save in the output format
         print('{} r2_in : {}'.format(name, r2_in))
 run('rfe')
-run_model_from_disk('ForestWithKFold_201905181442.sav')
+run_model_from_disk('GradientBoostingRegressor_BEST_201905182203.sav')
