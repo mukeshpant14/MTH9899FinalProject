@@ -180,6 +180,10 @@ def get_model(name):
         #from gb_param_tuning
         return GradientBoostingRegressor(learning_rate=0.1,n_estimators=100,max_depth=3,
                                          max_features='sqrt',min_samples_split=0.001)
+    elif name == 'RandomForestRegressor_BEST':
+        #from CrossValidationModelRegressor
+        return RandomForestRegressor(n_estimators=100,max_depth=5,max_features=6,
+                                     min_samples_split=0.001,min_samples_leaf=0.0001)
     # cluster based models
     elif name == 'ClusterLinearRegressor': return ClusterRegressor('LinearRegression')
     elif name == 'ClusterGradientBoostingRegressor': return ClusterRegressor('GradientBoostingRegressor', params={
@@ -529,4 +533,4 @@ def run_model_from_disk(filename, selection='rfe', train_test=True):
         #TODO Save in the output format
         print('{} r2_in : {}'.format(name, r2_in))
 run('rfe')
-run_model_from_disk('GradientBoosterWithKFold_201905181215.sav')
+run_model_from_disk('ForestWithKFold_201905181442.sav')
