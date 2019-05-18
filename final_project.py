@@ -32,6 +32,19 @@ from sklearn.base import BaseEstimator
 import pickle
 from time import gmtime, strftime
 
+def mad_filter(samples, n=5):
+    result = samples.copy()
+    center = np.median(result)
+    mad = np.median(abs(result-center))
+    minimum = center - n*mad
+    maximum = center + n*mad
+    for i in range(len(result)):
+        val = result[i]
+        if val < minimum:
+            result[i] = minimum
+        elif  val > maximum:
+            result[i] = maximum
+    return result
 
 def ts_normalize(df, columns):
     result = df.copy()
@@ -143,7 +156,9 @@ def clean_data(org_data, empty_thres=0.25):
     #normalize data and fill empty records
     median = org_data['vol'].median()
     input_vars = ['vol','X1','X2','X3','X4','X5','X6','X7']
-    clean_series = [ ts_fillna(x, 'vol', median) for x in clean_series] 
+    clean_series = [ ts_fillna(x, 'vol', median) for x in clean_series]
+    
+   
     clean_series = [ ts_normalize(x, input_vars) for x in clean_series] 
   
     #make vol a stationary variable using fractional differencing
@@ -454,7 +469,7 @@ def gb_param_tuning(X, y, cv_splits=5):
 # Run Model
 #########################################################   
 def run(selection='mda'):
-    input_vars = ['vol','X1','X2','X3','X4','X5','X6','X7']
+    input_vars = ['vol_ffd','X1','X2','X3','X4','X5','X6','X7']
     df = get_data()
     df = clean_data(df)
     df = pre_process(df, input_vars)
@@ -469,13 +484,19 @@ def run(selection='mda'):
         X2 = poly.fit_transform(X)
     else: #only basic features
         X2 = X
-          
+    
+    #cross-sectional normalization with all features
+    sc = StandardScaler()
+    for i in range(X2.shape[1]):
+        scaled = sc.fit_transform(X2[:,i].reshape(-1,1))
+        X2[:,i] = scaled[:,0]
+            
     X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False)
     # Append the models to the models list
     model_names = ['LinearRegression', 'GradientBoostingRegressor', 'RandomForestRegressor', 
                    'KNeighborsRegressor', 'ClusterLinearRegressor', 'ClusterGradientBoostingRegressor']
     model_names = ['LSTMRegressor']
-    model_names = ['LinearRegression', 'GradientBoostingRegressor', 'GradientBoostingRegressor_100']
+    model_names = ['LinearRegression', 'GradientBoostingRegressor_BEST']
     model_names = ['GradientBoosterWithKFold', 'GradientBoostingRegressor_BEST']
     model_names = ['GradientBoostingRegressor_BEST']
     model_names = ['ClusterLSTMRegressor', 'LSTMRegressor']
@@ -528,8 +549,8 @@ def run_model_from_disk(filename, selection='rfe', train_test=True):
         #r2_in = cr.score(X_train, y_train)
         print('{} r2_in : {}, r2_out:{}'.format(name, r2_in, r2_out))
     else:
-        r2_in = cr.score(X2, y)
-        y_pred = cr.score(X2)
+        
+        y_pred = cr.predict(X2)
         #TODO Save in the output format
         print('{} r2_in : {}'.format(name, r2_in))
 run('rfe')
