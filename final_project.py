@@ -29,6 +29,9 @@ from keras.layers import Dense
 from keras.layers import LSTM
 from keras.layers import Dropout
 from sklearn.base import BaseEstimator
+import pickle
+from time import gmtime, strftime
+
 
 def ts_normalize(df, columns):
     result = df.copy()
@@ -157,6 +160,7 @@ def get_model(name):
     # vanilla models 
     if name == 'LinearRegression': return LinearRegression()
     elif name == 'RandomForestRegressor': return RandomForestRegressor(n_estimators=10,min_samples_split=0.001)
+    elif name == 'RandomForestRegressor_CV': return RandomForestRegressor(n_jobs=4)
     elif name == 'KNeighborsRegressor': return KNeighborsRegressor()
     elif name == 'GradientBoostingRegressor': 
         return GradientBoostingRegressor(learning_rate=0.1,n_estimators=20,max_depth=2,
@@ -183,7 +187,16 @@ def get_model(name):
             'max_features':6,'min_samples_split':4000, 'min_samples_leaf':200
             })
     elif name == 'ClusterLSTMRegressor': return ClusterRegressor('LSTMRegressor', params={'time_step':1})
+    elif name == 'ForestWithKFold': 
+        return CrossValidationModelRegressor('RandomForestRegressor_CV', params={
+            'n_estimators':[20, 100],
+            'max_depth':[3, 5, None],
+            'max_features':[0.5, 10, 6],
+            'min_samples_split':[0.001, 0.0001],
+            'min_samples_leaf':[0.001, 0.0001]
+            }, n_splits=5)
     else: return LinearRegression()
+    
   
 #########################################################
 # Regressor with Cross Validation (K-fold)
@@ -199,7 +212,7 @@ class CrossValidationModelRegressor:
         estimator = constructor()
 
         cv = KFold(n_splits=self.n_splits)
-        classifier = GridSearchCV(estimator=estimator, cv=cv, param_grid=self.params, n_jobs=4)
+        classifier = GridSearchCV(estimator=estimator, cv=cv, param_grid=self.params, n_jobs=4, verbose=10)
         classifier.fit(X, y)
         
         self.classifier = classifier
@@ -459,16 +472,19 @@ def run(selection='mda'):
                    'KNeighborsRegressor', 'ClusterLinearRegressor', 'ClusterGradientBoostingRegressor']
     model_names = ['LSTMRegressor']
     model_names = ['LinearRegression', 'GradientBoostingRegressor', 'GradientBoostingRegressor_100']
-    model_names = ['GradientBoosterWithKFold', 'GradientBoostingRegressor_100']
+    model_names = ['GradientBoosterWithKFold', 'GradientBoostingRegressor_BEST']
     model_names = ['GradientBoostingRegressor_BEST']
     model_names = ['ClusterLSTMRegressor', 'LSTMRegressor']
+    model_names = ['ForestWithKFold', 'RandomForestRegressor']
     # fit
     result = {}
     for name in model_names:
         print('Running model:{}'.format(name))
         cr = get_model(name)
         cr.fit(X_train, y_train)
-        
+        timestamp = strftime("%Y%m%d%H%M", gmtime())
+        filename = name + "_" + timestamp + ".sav"
+        pickle.dump(cr, open(filename, 'wb'))
         if name != 'LSTMRegressor': 
             r2_out = r2_score(y_test, cr.predict(X_test))
             r2_in = r2_score(y_train, cr.predict(X_train))
@@ -479,5 +495,38 @@ def run(selection='mda'):
         result[name] = (r2_in, r2_out)
         print('{} r2_in : {}, r2_out:{}'.format(name, r2_in, r2_out))
 
-run('rfe')
 
+def run_model_from_disk(filename, selection='rfe', train_test=True):
+    # load the model from disk
+    split = filename.split('_')
+    name = split[0]
+    ts = split[1]
+    print(f"Loading model: {name} (created {ts})")
+    cr = pickle.load(open(filename, 'rb'))
+    df = get_data()
+    df = clean_data(df)
+    (X, y) = get(df)
+    if selection == 'mda':
+        X2 = featureselection_mda(X, y)
+    elif selection == 'rfe':
+        X2 = featureselection_rfe(X, y)
+    elif selection == 'all': #all features
+        poly = PolynomialFeatures(degree=2, include_bias=False)
+        X2 = poly.fit_transform(X)
+    else: #only basic features
+        X2 = X
+    
+    if train_test:
+        X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False)
+        r2_out = r2_score(y_test, cr.predict(X_test))
+        r2_in = r2_score(y_train, cr.predict(X_train))
+        #r2_out = cr.score(X_test, y_test)
+        #r2_in = cr.score(X_train, y_train)
+        print('{} r2_in : {}, r2_out:{}'.format(name, r2_in, r2_out))
+    else:
+        r2_in = cr.score(X2, y)
+        y_pred = cr.score(X2)
+        #TODO Save in the output format
+        print('{} r2_in : {}'.format(name, r2_in))
+run('rfe')
+run_model_from_disk('GradientBoosterWithKFold_201905181215.sav')
