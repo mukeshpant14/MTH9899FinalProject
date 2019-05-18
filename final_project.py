@@ -88,7 +88,7 @@ def get(df):
 def get_data():
     df = pd.read_csv('dat_final.csv')
     df.set_index('Date')
-    df = df.loc[df['Date']==0]
+    #df = df.loc[df['Date']==0]
     return df
 
 #########################################################
@@ -103,14 +103,7 @@ def pre_process(df, input_vars, normalize=True):
 #    plt.show()
 
     #normalize data and fill empty records
-    median = df['vol'].median()
-    df = ts_fillna(df, 'vol', median)
     
-    if normalize:
-        df = ts_normalize(df, input_vars) 
-  
-    # factor of differentiation decided as the one that makes all the samples in the dataset stationary
-    add_vol_ffd(df, 0.7) 
     return df
 
 #########################################################
@@ -144,6 +137,16 @@ def clean_data(org_data, empty_thres=0.25):
     for s in series:
         if s.sec_id[0] not in empty_secs:
             clean_series.append(s)
+    #normalize data and fill empty records
+    median = org_data['vol'].median()
+    input_vars = ['vol','X1','X2','X3','X4','X5','X6','X7']
+    clean_series = [ ts_fillna(x, 'vol', median) for x in clean_series] 
+    clean_series = [ ts_normalize(x, input_vars) for x in clean_series] 
+  
+    #make vol a stationary variable using fractional differencing
+    #the differencing factor is decided as the value that makes more than 95% 
+    #of the samples in the dataset stationary
+    [add_vol_ffd(x, 0.7) for x in clean_series]
   
     return pd.concat(clean_series)
     
@@ -457,6 +460,7 @@ def run(selection='mda'):
     model_names = ['LSTMRegressor']
     model_names = ['LinearRegression', 'GradientBoostingRegressor', 'GradientBoostingRegressor_100']
     model_names = ['GradientBoosterWithKFold', 'GradientBoostingRegressor_100']
+    model_names = ['GradientBoostingRegressor_BEST']
     model_names = ['ClusterLSTMRegressor', 'LSTMRegressor']
     # fit
     result = {}
