@@ -29,6 +29,7 @@ from keras.layers import Dense
 from keras.layers import LSTM
 from keras.layers import Dropout
 from sklearn.base import BaseEstimator
+from sklearn import linear_model
 import pickle
 from time import gmtime, strftime
 
@@ -214,6 +215,8 @@ def get_model(name):
             'min_samples_split':[0.001, 0.0001],
             'min_samples_leaf':[0.001, 0.0001]
             }, n_splits=5)
+    elif name == 'LassoCV':
+        return linear_model.LassoCV(normalize=True, cv=5)
     else: return LinearRegression()
     
   
@@ -416,7 +419,7 @@ def featureselection_mda(X, y):
     scores = defaultdict(list)
     features = poly.get_feature_names()
 
-    reg = LinearRegression()
+    reg = linear_model.LassoCV(cv=5)
     count = 1
     splits = 100
     for train_idx, test_idx in ShuffleSplit(n_splits=splits).split(X2):
@@ -439,10 +442,11 @@ def featureselection_mda(X, y):
     print ("Features by MDA process:")
     
     rcParams['figure.figsize'] = 16, 20
-    plt.title('Feature Importances by MDA')
+    plt.title('Feature Importances by MDA', fontsize=18)
     plt.barh(range(len(mda_indices)), [mda_importance[i] for i in mda_indices], color='#8f63f4', align='center')
-    plt.yticks(range(len(mda_indices)), [mda_features[i] for i in mda_indices])
-    plt.xlabel('Mean decrease accuracy')
+    plt.yticks(range(len(mda_indices)), [mda_features[i] for i in mda_indices], fontsize=16)
+    plt.axhline(X2.shape[1]//2, linestyle='dotted')
+    plt.xlabel('Mean decrease accuracy', fontsize=18)
     plt.show()
     
     
@@ -558,4 +562,4 @@ def run_model_from_disk(filename, selection='rfe', train_test=True):
         #TODO Save in the output format
         print('{} r2_in : {}'.format(name, r2_in))
 run('rfe')
-run_model_from_disk('GradientBoostingRegressor_BEST_201905182203.sav')
+run_model_from_disk('GradientBoostingRegressor_BEST_201905200056.sav')
