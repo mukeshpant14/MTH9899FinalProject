@@ -28,7 +28,6 @@ from keras.models import Sequential
 from keras.layers import Dense
 from keras.layers import LSTM
 from keras.layers import Dropout
-from sklearn.base import BaseEstimator
 from sklearn import linear_model
 import pickle
 from time import gmtime, strftime
@@ -93,35 +92,60 @@ def frac_diff_ffd(x, d, thres=1e-3):
 def add_vol_ffd(series, fd):
     series['vol_ffd'] = frac_diff_ffd(series.vol, fd)    
 
-def get(df):
-    #X = df[['vol', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']].values
-    X = df[['vol_ffd', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']].values
-    y = df[['fut_ret']].values.flatten()
-    return (X, y)
+def plot_prediction(keys, y_test, y_pred):
+    keys_df = pd.DataFrame(keys, columns =['Date', 'sec_id'])
+    y_test_df = pd.DataFrame(y_test, columns =['y_test'])
+    y_pred_df = pd.DataFrame(y_pred, columns =['y_pred'])
+    
+    print('in plot')
+    print(keys_df.shape)
+    print(y_test_df.shape)
+    print(y_pred_df.shape)
+    
+    df = pd.concat([keys_df, y_test_df, y_pred_df], axis=1, join_axes=[keys_df.index])
+    print(df.shape)
+    
+    df = df.loc[df['sec_id'] == 0]
+  
+    df.set_index('Date')
+    df.plot(kind='line',x='Date', y='y_test', ax=plt.gca())
+    df.plot(kind='line',x='Date', y='y_pred', color='red', ax=plt.gca())
+    
+    plt.show()
 
+def get_final_oos_data():
+    print('Reading from file dat_final_oos_noy.csv')
+    df =pd.read_csv('dat_final_oos_noy.csv')
+    df.set_index('Date')
+    df = df.loc[df['sec_id'].isin([0, 1])]
+    return df
+        
 #########################################################
 # Get Data
 #########################################################    
-def get_data():
-    df = pd.read_csv('dat_final.csv')
+def get_data():  
+    print('Reading from file dat_final.csv')
+    df = pd.read_csv('dat_final.csv')    
+    #    df = df.loc[df['Date'].isin([0, 1])]
+#    df = df.loc[df['sec_id'].isin([0, 1, 2])]  # should remove these only for testing
+
     df.set_index('Date')
-    #df = df.loc[df['Date']==0]
     return df
 
-#########################################################
-# Pre process data
-#########################################################
-def pre_process(df, input_vars, normalize=True):
-    # Check the statistics of the columns of the merged dataframe and check for outliers
-    print(df.describe())
-
-    # plot histogram
-#    df.hist(sharex = False, sharey = False, xlabelsize = 4, ylabelsize = 4, figsize=(10, 10))
-#    plt.show()
-
-    #normalize data and fill empty records
-    
-    return df
+##########################################################
+## Pre process data
+##########################################################
+#def pre_process(df, input_vars, normalize=True):
+#    # Check the statistics of the columns of the merged dataframe and check for outliers
+#    print(df.describe())
+#
+#    # plot histogram
+##    df.hist(sharex = False, sharey = False, xlabelsize = 4, ylabelsize = 4, figsize=(10, 10))
+##    plt.show()
+#
+#    #normalize data and fill empty records
+#    print('Done Preprocessing data...')
+#    return df
 
 #########################################################
 # Clean data
@@ -138,51 +162,100 @@ def clean_data(org_data, empty_thres=0.25):
     sec_ids = org_data['sec_id'].unique()
     series = [org_data[org_data['sec_id']== i] for i in sec_ids]
     series = [ x.set_index('Date') for x in series] #sets the index to the Date
-  
+ 
     # get rid of the securities with less than empty_thres % valid return or vol data (zeros)
     empty_secs = set()
-    for i in range(len(series)):
-        s = series[i]
-        total = s.shape[0]
-        zeros = len(s[s.fut_ret==0.0])
-        if zeros>total*empty_thres:
-            empty_secs.add(s.sec_id[0])
-
-    discarded = len(empty_secs)
-    print(f"Discarding {discarded} securities with incomplete return data (threshold={empty_thres})")
     clean_series = []
-    for s in series:
-        if s.sec_id[0] not in empty_secs:
+    if empty_thres < 1:
+        for i in range(len(series)):
+            s = series[i]
+            total = s.shape[0]
+            zeros = len(s[s.fut_ret==0.0])
+            if zeros>total*empty_thres:
+                empty_secs.add(s.sec_id[0])
+
+        discarded = len(empty_secs)
+        print(f"Discarding {discarded} securities with incomplete return data (threshold={empty_thres})")
+        
+        for s in series:
+            if s.sec_id[0] not in empty_secs:
+                clean_series.append(s)
+    else:
+        for s in series:
             clean_series.append(s)
+     
     #normalize data and fill empty records
     median = org_data['vol'].median()
     input_vars = ['vol','X1','X2','X3','X4','X5','X6','X7']
     clean_series = [ ts_fillna(x, 'vol', median) for x in clean_series]
     
-   
     clean_series = [ ts_normalize(x, input_vars) for x in clean_series] 
-  
+    
     #make vol a stationary variable using fractional differencing
     #the differencing factor is decided as the value that makes more than 95% 
     #of the samples in the dataset stationary
+#    print(clean_series)
     [add_vol_ffd(x, 0.7) for x in clean_series]
-  
-    return pd.concat(clean_series)
+      
+    print('Done cleaning data...')
+    d = pd.concat(clean_series)
+    return d
     
 #########################################################
 # List of all the models
 #########################################################        
 def get_model(name):
     # vanilla models 
-    if name == 'LinearRegression': return LinearRegression()
-    elif name == 'RandomForestRegressor': return RandomForestRegressor(n_estimators=10,min_samples_split=0.001)
-    elif name == 'RandomForestRegressor_CV': return RandomForestRegressor(n_jobs=4)
-    elif name == 'KNeighborsRegressor': return KNeighborsRegressor()
+    if name == 'LinearRegression': 
+        return LinearRegression()
+    elif name == 'RandomForestRegressor': 
+        return RandomForestRegressor(n_estimators=10,min_samples_split=0.001)
+    elif name == 'KNeighborsRegressor': 
+        return KNeighborsRegressor()
     elif name == 'GradientBoostingRegressor': 
         return GradientBoostingRegressor(learning_rate=0.1,n_estimators=20,max_depth=2,
                                          max_features=6,min_samples_split=4000,min_samples_leaf=200)
-    elif name == 'LSTMRegressor': return LSTMRegressor(time_step=30)
-    # models with cross validations
+    elif name == 'LSTMRegressor': 
+        return LSTMRegressor(time_step=1)
+    elif name == 'LassoCV':
+        return linear_model.LassoCV(normalize=True, cv=5) 
+    #----------------------------------------------
+    # cluster based models ClusterLinearRegressor
+    #----------------------------------------------
+    elif name == 'ClusterLinearRegressor': return ClusterRegressor('LinearRegression', params={'n_jobs':1})
+    elif name == 'ClusterGradientBoostingRegressor': return ClusterRegressor('GradientBoostingRegressor', params={
+            'learning_rate':0.1,'n_estimators':100, 'max_depth':3,
+            'max_features':'sqrt','min_samples_split':0.001, 'min_samples_leaf':200
+            })
+    elif name == 'ClusterLSTMRegressor': return ClusterRegressor('LSTMRegressor', params={'time_step':1})
+    #----------------------------------------------
+    # Best models 
+    #----------------------------------------------
+    elif name == 'GradientBoostingRegressor_BEST':
+        #from CrossValidationModelRegressor
+        return GradientBoostingRegressor(learning_rate=0.1,n_estimators=100,max_depth=3,
+                                         max_features='sqrt',min_samples_split=0.001)
+    elif name == 'ClusterGradientBoostingRegressor_BEST': 
+        return ClusterRegressor('GradientBoostingRegressor', params={
+            'learning_rate':0.1,'n_estimators':100, 'max_depth':3,
+            'max_features':'sqrt','min_samples_split':0.001, 'min_samples_leaf':200
+            })
+    elif name == 'RandomForestRegressor_BEST':
+        #from CrossValidationModelRegressor
+        return RandomForestRegressor(n_estimators=100,max_depth=5,max_features=6,
+                                     min_samples_split=0.001,min_samples_leaf=0.0001)
+    #----------------------------------------------
+    # Models for parameter tuning
+    #----------------------------------------------
+    elif name == 'ForestWithKFold': 
+        return CrossValidationModelRegressor('RandomForestRegressor', params={
+            'n_estimators':[20, 100],
+            'max_depth':[3, 5, None],
+            'max_features':[0.5, 10, 6],
+            'min_samples_split':[0.001, 0.0001],
+            'min_samples_leaf':[0.001, 0.0001],
+            'n_jobs':[4]
+            }, n_splits=5)
     elif name == 'GradientBoosterWithKFold': 
         return CrossValidationModelRegressor('GradientBoostingRegressor', params={
             'learning_rate':[0.1, 0.01],
@@ -192,34 +265,8 @@ def get_model(name):
             'min_samples_split':[4000, 0.001],
             'min_samples_leaf':[200]
             }, n_splits=5)
-    elif name == 'GradientBoostingRegressor_BEST':
-        #from gb_param_tuning
-        return GradientBoostingRegressor(learning_rate=0.1,n_estimators=100,max_depth=3,
-                                         max_features='sqrt',min_samples_split=0.001)
-    elif name == 'RandomForestRegressor_BEST':
-        #from CrossValidationModelRegressor
-        return RandomForestRegressor(n_estimators=100,max_depth=5,max_features=6,
-                                     min_samples_split=0.001,min_samples_leaf=0.0001)
-    # cluster based models
-    elif name == 'ClusterLinearRegressor': return ClusterRegressor('LinearRegression')
-    elif name == 'ClusterGradientBoostingRegressor': return ClusterRegressor('GradientBoostingRegressor', params={
-            'learning_rate':0.1,'n_estimators':20, 'max_depth':2,
-            'max_features':6,'min_samples_split':4000, 'min_samples_leaf':200
-            })
-    elif name == 'ClusterLSTMRegressor': return ClusterRegressor('LSTMRegressor', params={'time_step':1})
-    elif name == 'ForestWithKFold': 
-        return CrossValidationModelRegressor('RandomForestRegressor_CV', params={
-            'n_estimators':[20, 100],
-            'max_depth':[3, 5, None],
-            'max_features':[0.5, 10, 6],
-            'min_samples_split':[0.001, 0.0001],
-            'min_samples_leaf':[0.001, 0.0001]
-            }, n_splits=5)
-    elif name == 'LassoCV':
-        return linear_model.LassoCV(normalize=True, cv=5)
-    else: return LinearRegression()
+    else: raise Exception('Invalid model: {}'.format(name))
     
-  
 #########################################################
 # Regressor with Cross Validation (K-fold)
 #########################################################
@@ -242,7 +289,7 @@ class CrossValidationModelRegressor:
         best_est = classifier.best_estimator_
         print('best estimator: {}'.format(best_est))
         best_estimator = globals()[self.model_name]
-        best_estimator = best_estimator.set_params(best_est)
+        best_estimator = best_estimator.set_params(**best_est)
         
         best_estimator.fit(X, y)
         self.best_estimator = best_estimator
@@ -256,8 +303,9 @@ class CrossValidationModelRegressor:
 class LSTMRegressor():
     def __init__(self, time_step=30):
         self.time_step = time_step
+        self.cols = ['vol_ffd', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']
         
-    def set_params(self, params):
+    def set_params(self, **params):
         print(params)
         self.time_step = params['time_step']
         return self;
@@ -279,7 +327,7 @@ class LSTMRegressor():
     def fit(self, X, y):
         (X_m, y_m) = self.build_timeseries(X, y)
         
-        batch_size = 10000
+        batch_size = 1000
         regressor = Sequential()
 
         # Adding the first LSTM layer and some Dropout regularisation
@@ -297,14 +345,18 @@ class LSTMRegressor():
         # Adding a fourth LSTM layer and some Dropout regularisation
         regressor.add(LSTM(units = 50))
         regressor.add(Dropout(0.2))
-        
+
         # Adding the output layer
-        regressor.add(Dense(units=self.time_step))
+        regressor.add(Dense(units= self.time_step))
+
+        # Adding the output layer
+#        regressor.add(Dense(units = 1))
+        
         # Compiling the RNN
         regressor.compile(optimizer = 'ADAgrad', loss = 'mean_squared_error')
         
         # Fitting the RNN to the Training set
-        regressor.fit(X_m, y_m, epochs =1, batch_size = batch_size)
+        regressor.fit(X_m, y_m, epochs=5, batch_size = batch_size)
         self.regressor = regressor
         
     def score(self, X_test, y_test):
@@ -327,23 +379,33 @@ class ClusterRegressor:
     def __init__(self, model_name, params):
         self.model_name = model_name
         self.params = params
-        
+        self.cluster_feature_index = [0, 1]
+       
+    def get_cluster_feature_data(self, X):
+        # select data for specific feature
+        df_X = pd.DataFrame(X)[self.cluster_feature_index] # feature
+        X_feat = df_X.values
+        return X_feat
+    
     def kmeans_cluster(self, X):
+        X_feat = self.get_cluster_feature_data(X)
+        
         sse = []
         clusters = range(2,15,2) 
         for k in clusters:
             print('k:{}'.format(k))
             kmeans = KMeans(n_clusters = k)
-            kmeans.fit(X)
+            kmeans.fit(X_feat)
             sse.append(kmeans.inertia_) #SSE for each n_clusters
             
         plt.plot(clusters, sse)
         plt.title("Elbow Curve")
         plt.show()
         
+        print(kmeans)
         k = 8  # clusters to use
-        kmeans = KMeans(n_clusters = k).fit(X)
-        plt.scatter(X[:,0],X[:,1], c = kmeans.labels_, cmap ="rainbow")
+        kmeans = KMeans(n_clusters = k).fit(X_feat)
+        plt.scatter(X_feat[:,0],X_feat[:,1], c = kmeans.labels_, cmap ="rainbow")
         plt.show()    
         self.kmeans = kmeans;
     
@@ -369,7 +431,10 @@ class ClusterRegressor:
             y_train = filtered_df_y.drop(columns='cluster').values.flatten()
             
             regressor = globals()[self.model_name]()
-            regressor = regressor.set_params(self.params)
+#            print(regressor)
+#            print('parameters available: {}'.format(regressor.get_params().keys()))
+#            print(**self.params)
+            regressor = regressor.set_params(**self.params)
             print('cluster:{}, model:{}, data size:{}'.format(cluster, self.model_name, len(y_train)))
             regressor.fit(X_train, y_train)
             models[cluster] = regressor
@@ -378,21 +443,20 @@ class ClusterRegressor:
         self.models = models
         
     def predict(self, X_test):
-        labels = self.kmeans.predict(X_test)       
+        X_feat = self.get_cluster_feature_data(X_test)
+        labels = self.kmeans.predict(X_feat)   
+        
         clusters = pd.DataFrame(labels, columns=['cluster'])
         df = pd.DataFrame(X_test)
         
         df = pd.concat([df, clusters], axis=1)
         y_pred_arr =[]
-        print('start predict')
         for index, row in df.iterrows():
             r = np.reshape(np.array(row[:-1]), (1, len(row)-1))
             y_pred = self.models[row['cluster']].predict(r)
             y_pred_arr.append(y_pred[0])
         
-        print('finished predict')
         return y_pred_arr
-
 
 def featureselection_rfe(X, y):     
     poly = PolynomialFeatures(degree=2, include_bias=False)
@@ -454,6 +518,7 @@ def featureselection_mda(X, y):
     sorted_feats = sorted(features.items(), key=operator.itemgetter(1), reverse=True)
     print(pd.DataFrame(sorted_feats))
     # discard half of the features
+    print(mda_indices[0:X2.shape[1]//2])
     return X2[:, mda_indices[0:X2.shape[1]//2]]
 
 def gb_param_tuning(X, y, cv_splits=5):
@@ -467,99 +532,160 @@ def gb_param_tuning(X, y, cv_splits=5):
     gb = GradientBoostingRegressor()
     clf = GridSearchCV(gb, parameters, cv=cv_splits, iid=False, verbose=10, n_jobs=4)
     clf.fit(X, y)
-    return clf.best_params_
+    return clf.best_params_    
 
-#########################################################
-# Run Model
-#########################################################   
-def run(selection='mda'):
-    input_vars = ['vol_ffd','X1','X2','X3','X4','X5','X6','X7']
-    df = get_data()
-    df = clean_data(df)
-    df = pre_process(df, input_vars)
+def processed_data(selection, final_oos_file=False):   
+    after_clean_cols = ['vol_ffd', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7']
     
-    (X, y) = get(df)
-    if selection == 'mda':
-        X2 = featureselection_mda(X, y)
-    elif selection == 'rfe':
-        X2 = featureselection_rfe(X, y)
-    elif selection == 'all': #all features
+    keys = None
+    if final_oos_file:
+        y=None # no 'fut_ret' in this case
+        df = get_final_oos_data()
+        df = clean_data(df, empty_thres=1)
+        
+        date_df = pd.DataFrame(df.index.values, columns=['Date'])
+        sec_df = pd.DataFrame(df['sec_id'].values, columns=['sec_id'])
+        keys = pd.concat([date_df, sec_df], axis=1)
+        
+        X = df[after_clean_cols].values
+        
         poly = PolynomialFeatures(degree=2, include_bias=False)
         X2 = poly.fit_transform(X)
-    else: #only basic features
-        X2 = X
+        
+        if selection=='mda':
+            # these indices came from tuning on input data
+            indices = [ 1,  9,  0,  3, 29, 20, 43, 22, 18, 28,  6,  4, 11,  7, 41, 38, 39,  2, 10, 34, 14, 12]
+            X2 = X2[:, indices]
+#        elif selection=='rfe':
+#            ranking == []
+#            X2 = X2[:,ranking==1]
+        else:
+            X2 = X
+    else:
+        df = get_data()
+        df = clean_data(df)
+
+        date_df = pd.DataFrame(df.index.values, columns=['Date'])
+        sec_df = pd.DataFrame(df['sec_id'].values, columns=['sec_id'])
+        keys = pd.concat([date_df, sec_df], axis=1)
+        
+        X = df[after_clean_cols].values
+        y = df[['fut_ret']].values.flatten()
     
+        if selection == 'mda':
+#            X2 = featureselection_mda(X, y)
+            poly = PolynomialFeatures(degree=2, include_bias=False)
+            X2 = poly.fit_transform(X)
+            indices = [ 1,  9,  0,  3, 29, 20, 43, 22, 18, 28,  6,  4, 11,  7, 41, 38, 39,  2, 10, 34, 14, 12]
+            X2 = X2[:, indices]
+        elif selection == 'rfe':
+            X2 = featureselection_rfe(X, y)
+        elif selection == 'all': #all features
+            poly = PolynomialFeatures(degree=2, include_bias=False)
+            X2 = poly.fit_transform(X)
+        else: #only basic features
+            X2 = X
+    
+    print('Done feature selection...')
+
     #cross-sectional normalization with all features
     sc = StandardScaler()
     for i in range(X2.shape[1]):
         scaled = sc.fit_transform(X2[:,i].reshape(-1,1))
         X2[:,i] = scaled[:,0]
             
-    X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False)
-    # Append the models to the models list
-    model_names = ['LinearRegression', 'GradientBoostingRegressor', 'RandomForestRegressor', 
-                   'KNeighborsRegressor', 'ClusterLinearRegressor', 'ClusterGradientBoostingRegressor']
-    model_names = ['LSTMRegressor']
-    model_names = ['LinearRegression', 'GradientBoostingRegressor_BEST']
-    model_names = ['GradientBoosterWithKFold', 'GradientBoostingRegressor_BEST']
-    model_names = ['GradientBoostingRegressor_BEST']
-    model_names = ['ClusterLSTMRegressor', 'LSTMRegressor']
-    model_names = ['RandomForestRegressor']
-    model_names = ['LinearRegression','RandomForestRegressor','RandomForestRegressor_CV',
-                   'KNeighborsRegressor','GradientBoostingRegressor','LSTMRegressor',
-                   'GradientBoosterWithKFold','GradientBoostingRegressor_BEST','RandomForestRegressor_BEST',
-                   'ClusterLinearRegressor','ClusterGradientBoostingRegressor','ClusterLSTMRegressor',
-                   'ForestWithKFold']
+    return (X2, y, keys)
+    
+#########################################################
+# Run Model
+#########################################################   
+def run(selection='mda', model_names=None, save=False, use_saved_model=False):
+    (X2, y, keys) = processed_data(selection)
+    X_train, X_test, y_train, y_test, keys_train, keys_test = train_test_split(X2, y, keys, test_size=1/6, shuffle=False)
+    print(y_test.shape)
+    print(keys_test.shape)
+
+#    model_names=[]    
     # fit
     result = {}
-    for name in model_names:
-        print('Running model:{}'.format(name))
-        cr = get_model(name)
-        cr.fit(X_train, y_train)
-        timestamp = strftime("%Y%m%d%H%M", gmtime())
-        filename = name + "_" + timestamp + ".sav"
-        pickle.dump(cr, open(filename, 'wb'))
-        if name != 'LSTMRegressor': 
-            r2_out = r2_score(y_test, cr.predict(X_test))
-            r2_in = r2_score(y_train, cr.predict(X_train))
+    for name in model_names:   
+        if use_saved_model:
+#            my_models = [f for f in listdir('saved_models/') if f.startswith(name)]
+#            if len(my_models) != 1 :
+#                raise Exception('found zero or more than one models. {}'.format(my_models))
+            my_model = name + "__" + selection + "__20190522" 
+            split = my_model.split('__')
+            name = split[0]
+            feature_selection = split[1]
+            date = split[2]
+            print(f"Loading model: {name} (created {date}) with ({feature_selection})")
+            cr = pickle.load(open('saved_models/'+my_model+".sav", 'rb'))
         else:
-            r2_out = cr.score(X_test, y_test)
-            r2_in = cr.score(X_train, y_train)
+            cr = get_model(name)
+            print('Running model:{},\n{}'.format(name, cr))
+            cr.fit(X_train, y_train)
         
+        # if required save to disk
+        if save:
+            date = strftime("%Y%m%d", gmtime())
+            filename = name + "__" + selection + "__" + date + ".sav"
+            pickle.dump(cr, open('saved_models/'+filename, 'wb'))
+         
+        y_test_pred = cr.predict(X_test)
+        y_train_pred = cr.predict(X_train)
+        
+#        if name == 'LSTMRegressor':
+#            plot_prediction(keys_test, y_test, y_test_pred)
+            
+        r2_out = r2_score(y_test, y_test_pred)
+        r2_in = r2_score(y_train, y_train_pred)
+
         result[name] = (r2_in, r2_out)
         print('{} r2_in : {}, r2_out:{}'.format(name, r2_in, r2_out))
 
-
-def run_model_from_disk(filename, selection='rfe', train_test=True):
-    # load the model from disk
-    split = filename.split('_')
-    name = split[0]
-    ts = split[1]
-    print(f"Loading model: {name} (created {ts})")
-    cr = pickle.load(open(filename, 'rb'))
-    df = get_data()
-    df = clean_data(df)
-    (X, y) = get(df)
-    if selection == 'mda':
-        X2 = featureselection_mda(X, y)
-    elif selection == 'rfe':
-        X2 = featureselection_rfe(X, y)
-    elif selection == 'all': #all features
-        poly = PolynomialFeatures(degree=2, include_bias=False)
-        X2 = poly.fit_transform(X)
-    else: #only basic features
-        X2 = X
+    print(result)
     
-    if train_test:
-        X_train, X_test, y_train, y_test = train_test_split(X2, y, test_size=1/6, shuffle=False)
-        r2_out = r2_score(y_test, cr.predict(X_test))
-        r2_in = r2_score(y_train, cr.predict(X_train))
-        #r2_out = cr.score(X_test, y_test)
-        #r2_in = cr.score(X_train, y_train)
-        print('{} r2_in : {}, r2_out:{}'.format(name, r2_in, r2_out))
+def run_from_disk(saved_file):
+    # load the model from disk
+    split = saved_file.split('__')
+    name = split[0]
+    feature_selection = split[1]
+    date = split[2]
+    print(f"Loading model: {name} (created {date}) with ({feature_selection})")
+    
+    cr = pickle.load(open('saved_models/'+saved_file+'.sav', 'rb'))
+    (X_test, y_test, keys) = processed_data(feature_selection, final_oos_file=True)
+    
+    if name != 'LSTMRegressor': 
+        y_pred = cr.predict(X_test)
+        
+        outputfile = name + '__'+ 'mda' + '__' + date + '__' + 'ypredicted.csv'
+        df = pd.DataFrame(y_pred, columns = ['y_predicted'])
+        df.to_csv('saved_models/'+outputfile, sep='\t')
+        print('saved y predicted values in file: {}'.format(outputfile))
     else:
-        y_pred = cr.predict(X2)
-        #TODO Save in the output format
-        print('{} r2_in : {}'.format(name, r2_in))
-run('rfe')
-run_model_from_disk('GradientBoostingRegressor_BEST_201905200056.sav')
+        r2_out = cr.score(X_test, y_test)
+
+    return
+
+# run and save all the models 
+#model_names=[
+#    'LinearRegression',
+#    'RandomForestRegressor_BEST',
+#    'GradientBoostingRegressor_BEST',
+#    'ClusterLinearRegressor',
+#    'ClusterLSTMRegressor',
+#    'ClusterGradientBoostingRegressor_BEST',
+#]
+#run(selection='mda', save=False, use_saved_model=False)
+    
+#run(selection='none', model_names = ['LSTMRegressor'], save=False, use_saved_model=True)
+
+# Run saved model on OOS data
+    
+#run_from_disk(saved_file='LinearRegression__mda__20190522')
+#run_from_disk(saved_file='RandomForestRegressor_BEST__mda__20190522')
+#run_from_disk(saved_file='GradientBoostingRegressor_BEST__mda__20190522')
+#run_from_disk(saved_file='ClusterLinearRegressor__mda__20190522')
+#run_from_disk(saved_file='ClusterGradientBoostingRegressor_BEST__mda__20190522')
+#run_from_disk(saved_file='LSTMRegressor__none__20190522')
